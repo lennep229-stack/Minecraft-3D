@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Minecraft 3D Viewer</title>
+    <title>Minecraft 3D Interactive Builder</title>
     <style>
         body {
             margin: 0;
@@ -18,18 +18,24 @@
             width: 100%;
             text-align: center;
             color: white;
-            font-size: 18px;
+            font-size: 16px;
             pointer-events: none;
-            background: rgba(0,0,0,0.5);
-            padding: 10px 0;
+            background: rgba(0,0,0,0.6);
+            padding: 12px 0;
             user-select: none;
+        }
+        kbd {
+            background: #444;
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid #666;
         }
     </style>
 </head>
 <body>
 
     <div id="info">
-        🌱 <b>Minecraft 3D Grasblock</b> | Steuerung mit der Maus aktiv!
+        🎮 <b>Klick:</b> Block abbauen | <kbd>Shift</kbd> + <b>Klick:</b> Block setzen | <b>Rechte Maustaste / Ziehen:</b> Kamera drehen
     </div>
 
     <!-- 1. Three.js Hauptbibliothek -->
@@ -40,7 +46,7 @@
     <script>
         // Szene, Kamera & Renderer aufsetzen
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x1a1a24); // Schöner dunkler Nachthimmel-Hintergrund
+        scene.background = new THREE.Color(0x1a1a24);
 
         const camera = new THREE.PerspectiveCamera(
             75, 
@@ -48,31 +54,35 @@
             0.1, 
             1000
         );
-        camera.position.set(2.5, 2.5, 3.5);
+        camera.position.set(4, 5, 6);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.shadowMap.enabled = true; // Schatten aktivieren!
+        renderer.shadowMap.enabled = true;
         document.body.appendChild(renderer.domElement);
 
         // Maus-Steuerung
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
+        // Kamera-Drehung auf die rechte Maustaste legen, damit die linke frei zum Bauen ist!
+        controls.mouseButtons = {
+            LEFT: THREE.MOUSE.NONE,
+            MIDDLE: THREE.MOUSE.DOLLY,
+            RIGHT: THREE.MOUSE.ROTATE
+        };
 
-        // Beleuchtung (Sonne + Umgebungslicht)
+        // Beleuchtung
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         scene.add(ambientLight);
 
         const sunLight = new THREE.DirectionalLight(0xffffff, 0.9);
-        sunLight.position.set(6, 12, 8);
+        sunLight.position.set(10, 20, 15);
         sunLight.castShadow = true;
         scene.add(sunLight);
 
-        // TEXTUREN LADEN (Gras oben, Erde an den Seiten, Erde unten)
+        // Texturen laden
         const textureLoader = new THREE.TextureLoader();
-        
-        // Pixel-Art scharf halten (nicht verschwommen filtern)
         function loadMinecraftTexture(url) {
             const texture = textureLoader.load(url);
             texture.magFilter = THREE.NearestFilter;
@@ -84,30 +94,117 @@
         const textureTop = loadMinecraftTexture('https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.19/assets/minecraft/textures/block/grass_block_top.png');
         const textureBottom = loadMinecraftTexture('https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.19/assets/minecraft/textures/block/dirt.png');
 
-        // Material-Liste für die 6 Seiten des Würfels (Rechts, Links, Oben, Unten, Vorne, Hinten)
-        const materials = [
-            new THREE.MeshStandardMaterial({ map: textureSide }), // Rechts
-            new THREE.MeshStandardMaterial({ map: textureSide }), // Links
-            new THREE.MeshStandardMaterial({ map: textureTop, color: 0x7cbd6b }),  // Oben (mit typischer Minecraft-Grasfarbe)
-            new THREE.MeshStandardMaterial({ map: textureBottom }), // Unten
-            new THREE.MeshStandardMaterial({ map: textureSide }), // Vorne
-            new THREE.MeshStandardMaterial({ map: textureSide })  // Hinten
+        const blockMaterials = [
+            new THREE.MeshStandardMaterial({ map: textureSide }),
+            new THREE.MeshStandardMaterial({ map: textureSide }),
+            new THREE.MeshStandardMaterial({ map: textureTop, color: 0x7cbd6b }),
+            new THREE.MeshStandardMaterial({ map: textureBottom }),
+            new THREE.MeshStandardMaterial({ map: textureSide }),
+            new THREE.MeshStandardMaterial({ map: textureSide })
         ];
 
-        // 3D-Block mit den Texturen erstellen
-        const geometry = new THREE.BoxGeometry(1, 1, 1);
-        const block = new THREE.Mesh(geometry, materials);
-        block.castShadow = true;
-        scene.add(block);
+        const blockGeometry = new THREE.BoxGeometry(1, 1, 1);
+        const objects = []; // Enthält alle Objekte, mit denen man interagieren kann
 
-        // Bodenplatte für Schattenwurf
-        const planeGeometry = new THREE.PlaneGeometry(10, 10);
+        // Bodenplatte (Unsichtbar für Klicks, aber fängt Blöcke auf Y=0 ab)
+        const planeGeometry = new THREE.PlaneGeometry(20, 20);
+        planeGeometry.rotateX(-Math.PI / 2);
         const planeMaterial = new THREE.MeshStandardMaterial({ color: 0x22222b });
         const plane = new THREE.Mesh(planeGeometry, planeMaterial);
-        plane.rotation.x = -Math.PI / 2;
         plane.position.y = -0.5;
         plane.receiveShadow = true;
         scene.add(plane);
+        objects.push(plane);
+
+        // Boden-Gitternetz
+        const gridHelper = new THREE.GridHelper(20, 20, 0x555555, 0x333333);
+        gridHelper.position.y = -0.49;
+        scene.add(gridHelper);
+
+        // Hilfs-Drahtgitter für die Block-Vorschau
+        const rollOverGeo = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+        const rollOverMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
+        const rollOverMesh = new THREE.Mesh(rollOverGeo, rollOverMaterial);
+        scene.add(rollOverMesh);
+
+        // Einen Start-Block in der Mitte platzieren
+        createBlock(0, 0, 0);
+
+        function createBlock(x, y, z) {
+            const block = new THREE.Mesh(blockGeometry, blockMaterials);
+            block.position.set(x, y, z);
+            block.castShadow = true;
+            block.receiveShadow = true;
+            scene.add(block);
+            objects.push(block);
+        }
+
+        // Raycaster für Maus-Erkennung im 3D-Raum
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        let isShiftDown = false;
+
+        document.addEventListener('keydown', (e) => { if (e.key === 'Shift') isShiftDown = true; });
+        document.addEventListener('keyup', (e) => { if (e.key === 'Shift') isShiftDown = false; });
+
+        // Mausbewegung für Vorschau-Rahmen
+        window.addEventListener('pointermove', (event) => {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(objects, false);
+
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+                if (isShiftDown) {
+                    // Block an der getroffenen Fläche anbauen
+                    const targetPos = intersect.point.clone().add(intersect.face.normal.clone().multiplyScalar(0.5));
+                    rollOverMesh.position.copy(targetPos).floor().addScalar(0.5);
+                    rollOverMesh.visible = true;
+                } else {
+                    // Auf den bestehenden Block zeigen
+                    if (intersect.object !== plane) {
+                        rollOverMesh.position.copy(intersect.object.position);
+                        rollOverMesh.visible = true;
+                    } else {
+                        rollOverMesh.visible = false;
+                    }
+                }
+            } else {
+                rollOverMesh.visible = false;
+            }
+        });
+
+        // Klick-Event zum Bauen / Abbauen
+        window.addEventListener('pointerdown', (event) => {
+            // Nur auf linke Maustaste reagieren
+            if (event.button !== 0) return;
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(objects, false);
+
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+
+                if (isShiftDown) {
+                    // BLOCK SETZEN
+                    const targetPos = intersect.point.clone().add(intersect.face.normal.clone().multiplyScalar(0.5)).floor().addScalar(0.5);
+                    createBlock(targetPos.x, targetPos.y, targetPos.z);
+                } else {
+                    // BLOCK ABBAUEN
+                    if (intersect.object !== plane) {
+                        scene.remove(intersect.object);
+                        objects.splice(objects.indexOf(intersect.object), 1);
+                        rollOverMesh.visible = false;
+                    }
+                }
+            }
+        });
 
         // Animations-Schleife
         function animate() {
@@ -117,7 +214,7 @@
         }
         animate();
 
-        // Responsive Fenster-Anpassung
+        // Responsive Anpassung
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
