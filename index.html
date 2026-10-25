@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mein erster 3D Minecraft Würfel</title>
+    <title>Minecraft 3D Viewer</title>
     <style>
         body {
             margin: 0;
@@ -20,18 +20,24 @@
             color: white;
             font-size: 18px;
             pointer-events: none;
+            background: rgba(0,0,0,0.4);
+            padding: 10px 0;
         }
     </style>
 </head>
 <body>
 
-    <div id="info">Minecraft 3D Preview (Three.js Starter)</div>
+    <div id="info">
+        🎮 <b>Bedienung:</b> Linke Maustaste = Drehen | Mausrad = Zoomen | Rechte Maustaste = Verschieben
+    </div>
 
-    <!-- Three.js Bibliothek über CDN einbinden -->
+    <!-- 1. Three.js Hauptbibliothek -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- 2. OrbitControls Erweiterung für die Maus-Steuerung -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
     <script>
-        // 1. Szene, Kamera und Renderer erstellen
+        // Szene, Kamera & Renderer aufsetzen
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x222222);
 
@@ -41,41 +47,51 @@
             0.1, 
             1000
         );
-        camera.position.z = 3;
+        camera.position.set(2, 2, 3);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        // 2. Licht hinzufügen
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        // MAUS-STEUERUNG (OrbitControls) AKTIVIEREN
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true; // Macht die Bewegung geschmeidig ("Schwung")
+        controls.dampingFactor = 0.05;
+
+        // Beleuchtung
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
         scene.add(ambientLight);
 
         const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        directionalLight.position.set(5, 5, 5);
+        directionalLight.position.set(5, 10, 7);
         scene.add(directionalLight);
 
-        // 3. Einen 3D-Würfel erstellen
+        // 3D-Grasblock erstellen
         const geometry = new THREE.BoxGeometry(1, 1, 1);
         const material = new THREE.MeshStandardMaterial({ 
-            color: 0x557a2b, // Minecraft-Gras-Grün
+            color: 0x557a2b, 
             roughness: 0.8
         });
         const cube = new THREE.Mesh(geometry, material);
         scene.add(cube);
 
-        // 4. Animations-Schleife (Würfel drehen)
+        // Gitternetz am Boden hinzufügen (für besseres Raumgefühl)
+        const gridHelper = new THREE.GridHelper(10, 10, 0x444444, 0x333333);
+        gridHelper.position.y = -0.5;
+        scene.add(gridHelper);
+
+        // Animations-Schleife
         function animate() {
             requestAnimationFrame(animate);
-
-            cube.rotation.x += 0.01;
-            cube.rotation.y += 0.01;
+            
+            // Wichtig: Steuerung in jedem Frame aktualisieren
+            controls.update(); 
 
             renderer.render(scene, camera);
         }
         animate();
 
-        // 5. Responsive Anpassung bei Fenstergrößenänderung
+        // Responsive Fenster-Anpassung
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
