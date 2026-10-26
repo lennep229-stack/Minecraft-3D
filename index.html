@@ -166,7 +166,6 @@
         <button class="btn" onclick="document.getElementById('file-input').click()">📂 Laden</button>
         <button class="btn" onclick="clearWorld()">🗑️ Leeren</button>
         <input type="file" id="file-input" style="display: none;" accept=".json" onchange="importWorld(event)">
-        <!-- JETZT FREI FÜR ALLE DATEIEN, DAMIT SYSTEME WIE ANDROID/IOS NICHTS AUSGRAUEN -->
         <input type="file" id="schematic-input" style="display: none;" accept="*/*" onchange="loadSchematicFile(event)">
     </div>
 
@@ -324,46 +323,54 @@
             saveToLocalStorage();
         }
 
+        // SICHERER VARINT PARSER (MIT ABBRUCHBEDINGUNG GEGEN ENDLOSSCHLEIFEN)
         function readVarInt(array, offset) {
             let value = 0, size = 0, byte;
             do {
-                if (offset >= array.length) break;
-                byte = array[offset++];
+                if (offset + size >= array.length) break;
+                byte = array[offset + size];
                 value |= (byte & 0x7F) << (size * 7);
                 size++;
-            } while ((byte & 0x80) !== 0);
-            return { value, size };
+            } while ((byte & 0x80) !== 0 && size < 5);
+            return { value, size: size || 1 };
         }
 
         function loadSchematicFile(event) {
             const file = event.target.files[0];
             if (!file) return;
 
-            document.getElementById('loading-overlay').style.display = 'block';
+            const overlay = document.getElementById('loading-overlay');
+            overlay.style.display = 'block';
 
             setTimeout(() => {
                 const reader = new FileReader();
                 reader.onload = function(e) {
-                    const buffer = new Uint8Array(e.target.result);
+                    try {
+                        const buffer = new Uint8Array(e.target.result);
 
-                    if (file.name.endsWith('.zip') || (buffer[0] === 0x50 && buffer[1] === 0x4B)) {
-                        fflate.unzip(buffer, (err, unzipped) => {
-                            if (err) {
-                                document.getElementById('loading-overlay').style.display = 'none';
+                        if (file.name.endsWith('.zip') || (buffer[0] === 0x50 && buffer[1] === 0x4B)) {
+                            fflate.unzip(buffer, (err, unzipped) => {
+                                if (err) {
+                                    overlay.style.display = 'none';
+                                    event.target.value = '';
+                                    return alert("Konnte ZIP-Datei nicht entpacken.");
+                                }
+                                let foundKey = Object.keys(unzipped).find(k => k.endsWith('.schem') || k.endsWith('.schematic'));
+                                if (foundKey) parseNBTData(unzipped[foundKey]);
+                                else {
+                                    overlay.style.display = 'none';
+                                    alert("Keine Bauplan-Datei im ZIP gefunden.");
+                                }
                                 event.target.value = '';
-                                return alert("ZIP Fehler");
-                            }
-                            let foundKey = Object.keys(unzipped).find(k => k.endsWith('.schem') || k.endsWith('.schematic'));
-                            if (foundKey) parseNBTData(unzipped[foundKey]);
-                            else {
-                                document.getElementById('loading-overlay').style.display = 'none';
-                                alert("Keine Bauplan-Datei im ZIP gefunden.");
-                            }
+                            });
+                        } else {
+                            parseNBTData(buffer);
                             event.target.value = '';
-                        });
-                    } else {
-                        parseNBTData(buffer);
+                        }
+                    } catch (err) {
+                        overlay.style.display = 'none';
                         event.target.value = '';
+                        alert("Fehler beim Verarbeiten der Datei.");
                     }
                 };
                 reader.readAsArrayBuffer(file);
@@ -371,110 +378,119 @@
         }
 
         function parseNBTData(uint8Data) {
-            let uncompressed;
-            try { uncompressed = pako.ungzip(uint8Data); } catch (err) { uncompressed = uint8Data; }
+            const overlay = document.getElementById('loading-overlay');
 
-            nbt.parse(uncompressed, function(error, data) {
-                document.getElementById('loading-overlay').style.display = 'none';
+            try {
+                let uncompressed;
+                try { uncompressed = pako.ungzip(uint8Data); } catch (err) { uncompressed = uint8Data; }
 
-                if (error || !data) {
-                    alert("Konnte Bauplan-Daten nicht verarbeiten.");
-                    return;
-                }
+                nbt.parse(uncompressed, function(error, data) {
+                    overlay.style.display = 'none';
 
-                clearWorld(false);
-                const val = data.value;
-                const root = val.Schematic ? val.Schematic.value : (val.Width ? val : null);
-
-                if (!root) {
-                    alert("Unbekanntes Schematic-Format.");
-                    return;
-                }
-
-                const width = root.Width.value;
-                const height = root.Height.value;
-                const length = root.Length.value;
-
-                const slider = document.getElementById('layer-slider');
-                slider.max = height;
-                slider.value = height;
-                document.getElementById('layer-val').innerText = height;
-
-                let paletteMap = {};
-                let blockDataArray = null;
-
-                // FORMATAUSWERTUNG (V1, V2 UND V3)
-                if (root.Blocks && root.Blocks.type === 'byteArray') {
-                    // ALTES FORMAT (.schematic)
-                    const blocks = root.Blocks.value;
-                    let blockIdx = 0;
-                    for (let y = 0; y < height; y++) {
-                        for (let z = 0; z < length; z++) {
-                            for (let x = 0; x < width; x++) {
-                                const blockId = blocks[blockIdx];
-                                if (blockId !== 0) {
-                                    let typeIndex = getBlockTypeFromID(blockId);
-                                    createBlock(x - Math.floor(width/2), y, z - Math.floor(length/2), typeIndex, false);
-                                }
-                                blockIdx++;
-                            }
-                        }
-                    }
-                } 
-                else {
-                    // NEUES FORMAT SPONGE SCHEMATIC V3 (Ab MC 1.20+)
-                    if (root.Blocks && root.Blocks.type === 'compound') {
-                        const paletteObj = root.Blocks.value.Palette.value;
-                        Object.keys(paletteObj).forEach(name => {
-                            paletteMap[paletteObj[name].value] = name;
-                        });
-                        blockDataArray = root.Blocks.value.Data.value;
-                    } 
-                    // NEUES FORMAT SPONGE SCHEMATIC V2 (Älteres .schem)
-                    else if (root.BlockData) {
-                        const paletteObj = root.Palette ? root.Palette.value : {};
-                        Object.keys(paletteObj).forEach(name => {
-                            paletteMap[paletteObj[name].value] = name;
-                        });
-                        blockDataArray = root.BlockData.value;
+                    if (error || !data) {
+                        alert("Konnte Bauplan-Daten nicht verarbeiten.");
+                        return;
                     }
 
-                    if (blockDataArray) {
-                        let decodedIds = [];
-                        let offset = 0;
-                        while (offset < blockDataArray.length && decodedIds.length < width * height * length) {
-                            let res = readVarInt(blockDataArray, offset);
-                            decodedIds.push(res.value);
-                            offset += res.size;
-                        }
+                    clearWorld(false);
+                    const val = data.value;
+                    const root = val.Schematic ? val.Schematic.value : (val.Width ? val : null);
 
-                        let i = 0;
+                    if (!root) {
+                        alert("Unbekanntes Schematic-Format.");
+                        return;
+                    }
+
+                    const width = root.Width.value;
+                    const height = root.Height.value;
+                    const length = root.Length.value;
+
+                    const slider = document.getElementById('layer-slider');
+                    slider.max = height;
+                    slider.value = height;
+                    document.getElementById('layer-val').innerText = height;
+
+                    let paletteMap = {};
+                    let blockDataArray = null;
+
+                    // SCHEMATIC V1 (ALTS)
+                    if (root.Blocks && root.Blocks.type === 'byteArray') {
+                        const blocks = root.Blocks.value;
+                        let blockIdx = 0;
                         for (let y = 0; y < height; y++) {
                             for (let z = 0; z < length; z++) {
                                 for (let x = 0; x < width; x++) {
-                                    if (i < decodedIds.length) {
-                                        const stateId = decodedIds[i];
-                                        const blockName = paletteMap[stateId] || '';
-                                        if (blockName && !blockName.includes('air')) {
-                                            let typeIndex = getBlockTypeFromName(blockName);
-                                            createBlock(x - Math.floor(width/2), y, z - Math.floor(length/2), typeIndex, false);
-                                        }
+                                    const blockId = blocks[blockIdx];
+                                    if (blockId !== 0) {
+                                        let typeIndex = getBlockTypeFromID(blockId);
+                                        createBlock(x - Math.floor(width/2), y, z - Math.floor(length/2), typeIndex, false);
                                     }
-                                    i++;
+                                    blockIdx++;
+                                }
+                            }
+                        }
+                    } 
+                    else {
+                        // SCHEMATIC V3 (MC 1.20+)
+                        if (root.Blocks && root.Blocks.type === 'compound') {
+                            const paletteObj = root.Blocks.value.Palette.value;
+                            Object.keys(paletteObj).forEach(name => {
+                                paletteMap[paletteObj[name].value] = name;
+                            });
+                            blockDataArray = root.Blocks.value.Data ? root.Blocks.value.Data.value : null;
+                        } 
+                        // SCHEMATIC V2
+                        else if (root.BlockData) {
+                            const paletteObj = root.Palette ? root.Palette.value : {};
+                            Object.keys(paletteObj).forEach(name => {
+                                paletteMap[paletteObj[name].value] = name;
+                            });
+                            blockDataArray = root.BlockData.value;
+                        }
+
+                        if (blockDataArray) {
+                            // Sichern, dass blockDataArray als Uint8Array verarbeitet wird
+                            const dataBytes = new Uint8Array(blockDataArray.buffer || blockDataArray);
+                            let decodedIds = [];
+                            let offset = 0;
+                            const totalBlocks = width * height * length;
+
+                            while (offset < dataBytes.length && decodedIds.length < totalBlocks) {
+                                let res = readVarInt(dataBytes, offset);
+                                decodedIds.push(res.value);
+                                offset += res.size;
+                            }
+
+                            let i = 0;
+                            for (let y = 0; y < height; y++) {
+                                for (let z = 0; z < length; z++) {
+                                    for (let x = 0; x < width; x++) {
+                                        if (i < decodedIds.length) {
+                                            const stateId = decodedIds[i];
+                                            const blockName = paletteMap[stateId] || '';
+                                            if (blockName && !blockName.includes('air')) {
+                                                let typeIndex = getBlockTypeFromName(blockName);
+                                                createBlock(x - Math.floor(width/2), y, z - Math.floor(length/2), typeIndex, false);
+                                            }
+                                        }
+                                        i++;
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                saveToLocalStorage();
+                    saveToLocalStorage();
 
-                // Kamera automatisch ausrichten
-                const maxDim = Math.max(width, height, length);
-                camera.position.set(maxDim * 1.2, maxDim * 1.2, maxDim * 1.5);
-                controls.target.set(0, height / 2, 0);
-                controls.update();
-            });
+                    const maxDim = Math.max(width, height, length);
+                    camera.position.set(maxDim * 1.2, maxDim * 1.2, maxDim * 1.5);
+                    controls.target.set(0, height / 2, 0);
+                    controls.update();
+                });
+            } catch (err) {
+                overlay.style.display = 'none';
+                alert("Fehler beim Lesen der Bauplan-Struktur.");
+            }
         }
 
         function getBlockTypeFromID(id) {
