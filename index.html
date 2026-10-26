@@ -323,34 +323,6 @@
             saveToLocalStorage();
         }
 
-        function readVarInt(array, offset) {
-            let value = 0, size = 0, byte;
-            do {
-                if (offset + size >= array.length) break;
-                byte = array[offset + size];
-                value |= (byte & 0x7F) << (size * 7);
-                size++;
-            } while ((byte & 0x80) !== 0 && size < 5);
-            return { value, size: size || 1 };
-        }
-
-        // ROBUSSTE REKURSIVE SUCHE NACH TAGS IN DER NBT-STRUKTUR
-        function findTag(obj, keyName) {
-            if (!obj || typeof obj !== 'object') return null;
-            if (obj[keyName] !== undefined) return obj[keyName];
-            if (obj.value && typeof obj.value === 'object') {
-                const found = findTag(obj.value, keyName);
-                if (found) return found;
-            }
-            for (let k in obj) {
-                if (obj.hasOwnProperty(k) && typeof obj[k] === 'object') {
-                    const res = findTag(obj[k], keyName);
-                    if (res) return res;
-                }
-            }
-            return null;
-        }
-
         function loadSchematicFile(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -393,103 +365,96 @@
             }, 100);
         }
 
+        // --- EXAKTES PARSING (INCL. CLAUDE SPONGE V1/V2/V3 UND ERROR-DIAGNOSE) ---
         function parseNBTData(uint8Data) {
-            const overlay = document.getElementById('loading-overlay');
+            let uncompressed;
+            try { uncompressed = pako.ungzip(uint8Data); } catch (err) { uncompressed = uint8Data; }
 
-            try {
-                let uncompressed;
-                try { uncompressed = pako.ungzip(uint8Data); } catch (err) { uncompressed = uint8Data; }
+            nbt.parse(uncompressed, function(error, data) {
+                document.getElementById('loading-overlay').style.display = 'none';
 
-                nbt.parse(uncompressed, function(error, data) {
-                    overlay.style.display = 'none';
+                if (error || !data) {
+                    console.error(error);
+                    alert("NBT konnte nicht gelesen werden: " + (error ? error.message || error : "keine Daten"));
+                    return;
+                }
 
-                    if (error || !data) {
-                        alert("Konnte Bauplan-Daten nicht verarbeiten.");
-                        return;
+                try {
+                    const unwrap = v => (v && typeof v === 'object' && 'value' in v && 'type' in v) ? v.value : v;
+                    let root = unwrap(data);
+                    if (root.Schematic) root = unwrap(root.Schematic);
+
+                    console.log("Schematic-Keys:", Object.keys(root));
+
+                    const width  = unwrap(root.Width);
+                    const height = unwrap(root.Height);
+                    const length = unwrap(root.Length);
+
+                    if (!width || !height || !length) {
+                        throw new Error("Width/Height/Length fehlen. Keys: " + Object.keys(root).join(", "));
+                    }
+
+                    let palette = null, blockData = null, oldBlocks = null;
+
+                    if (root.Blocks && root.Blocks.type === 'compound') {
+                        // Sponge v3
+                        const b = unwrap(root.Blocks);
+                        palette   = unwrap(b.Palette);
+                        blockData = unwrap(b.Data);
+                    } else if (root.BlockData) {
+                        // Sponge v2
+                        palette   = unwrap(root.Palette);
+                        blockData = unwrap(root.BlockData);
+                    } else if (root.Blocks) {
+                        // Altes .schematic
+                        oldBlocks = unwrap(root.Blocks);
+                    } else {
+                        throw new Error("Unbekanntes Format. Keys: " + Object.keys(root).join(", "));
                     }
 
                     clearWorld(false);
 
-                    // Dynamische Suche nach Dimensionen
-                    const widthTag = findTag(data, 'Width');
-                    const heightTag = findTag(data, 'Height');
-                    const lengthTag = findTag(data, 'Length');
-
-                    if (!widthTag || !heightTag || !lengthTag) {
-                        alert("Dimensionen (Width/Height/Length) in der Datei nicht gefunden.");
-                        return;
-                    }
-
-                    const width = widthTag.value;
-                    const height = heightTag.value;
-                    const length = lengthTag.value;
-
                     const slider = document.getElementById('layer-slider');
-                    slider.max = height;
+                    slider.max = height; 
                     slider.value = height;
                     document.getElementById('layer-val').innerText = height;
 
-                    const blocksTag = findTag(data, 'Blocks');
-                    const blockDataTag = findTag(data, 'BlockData') || findTag(data, 'Data');
-                    const paletteTag = findTag(data, 'Palette');
+                    const ox = Math.floor(width / 2), oz = Math.floor(length / 2);
 
-                    // ALTES FORMAT (.schematic)
-                    if (blocksTag && blocksTag.type === 'byteArray') {
-                        const blocks = blocksTag.value;
-                        let blockIdx = 0;
-                        for (let y = 0; y < height; y++) {
-                            for (let z = 0; z < length; z++) {
+                    if (oldBlocks) {
+                        let i = 0;
+                        for (let y = 0; y < height; y++)
+                            for (let z = 0; z < length; z++)
                                 for (let x = 0; x < width; x++) {
-                                    const blockId = blocks[blockIdx];
-                                    if (blockId !== 0) {
-                                        let typeIndex = getBlockTypeFromID(blockId);
-                                        createBlock(x - Math.floor(width/2), y, z - Math.floor(length/2), typeIndex, false);
-                                    }
-                                    blockIdx++;
+                                    const id = oldBlocks[i++] & 0xFF;
+                                    if (id !== 0) createBlock(x - ox, y, z - oz, getBlockTypeFromID(id), false);
                                 }
-                            }
-                        }
-                    } 
-                    // NEUES FORMAT (.schem v2 & v3)
-                    else if (blockDataTag && paletteTag) {
+                    } else {
                         const paletteMap = {};
-                        const paletteObj = paletteTag.value;
-                        Object.keys(paletteObj).forEach(name => {
-                            const val = paletteObj[name].value !== undefined ? paletteObj[name].value : paletteObj[name];
-                            paletteMap[val] = name;
-                        });
+                        Object.keys(palette).forEach(name => { paletteMap[unwrap(palette[name])] = name; });
 
-                        const rawData = blockDataTag.value;
-                        const dataBytes = new Uint8Array(rawData.buffer || rawData);
-                        let decodedIds = [];
+                        const ids = [];
                         let offset = 0;
-                        const totalBlocks = width * height * length;
+                        const total = width * height * length;
 
-                        while (offset < dataBytes.length && decodedIds.length < totalBlocks) {
-                            let res = readVarInt(dataBytes, offset);
-                            decodedIds.push(res.value);
-                            offset += res.size;
+                        while (offset < blockData.length && ids.length < total) {
+                            let value = 0, size = 0, byte;
+                            do {
+                                byte = blockData[offset++] & 0xFF;
+                                value |= (byte & 0x7F) << (size * 7);
+                                size++;
+                            } while ((byte & 0x80) !== 0 && offset < blockData.length);
+                            ids.push(value);
                         }
 
                         let i = 0;
-                        for (let y = 0; y < height; y++) {
-                            for (let z = 0; z < length; z++) {
+                        for (let y = 0; y < height; y++)
+                            for (let z = 0; z < length; z++)
                                 for (let x = 0; x < width; x++) {
-                                    if (i < decodedIds.length) {
-                                        const stateId = decodedIds[i];
-                                        const blockName = paletteMap[stateId] || '';
-                                        if (blockName && !blockName.includes('air')) {
-                                            let typeIndex = getBlockTypeFromName(blockName);
-                                            createBlock(x - Math.floor(width/2), y, z - Math.floor(length/2), typeIndex, false);
-                                        }
-                                    }
-                                    i++;
+                                    const name = paletteMap[ids[i++]] || '';
+                                    if (name && !name.includes('air'))
+                                        createBlock(x - ox, y, z - oz, getBlockTypeFromName(name), false);
                                 }
-                            }
-                        }
-                    } else {
-                        alert("Unbekannte Schematic-Blockstruktur.");
-                        return;
                     }
 
                     saveToLocalStorage();
@@ -498,11 +463,12 @@
                     camera.position.set(maxDim * 1.2, maxDim * 1.2, maxDim * 1.5);
                     controls.target.set(0, height / 2, 0);
                     controls.update();
-                });
-            } catch (err) {
-                overlay.style.display = 'none';
-                alert("Fehler beim Lesen der Bauplan-Struktur.");
-            }
+
+                } catch (e) {
+                    console.error(e);
+                    alert("Fehler beim Lesen der Bauplan-Struktur:\n" + e.message);
+                }
+            });
         }
 
         function getBlockTypeFromID(id) {
