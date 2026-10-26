@@ -15,10 +15,9 @@
         #info {
             position: absolute;
             top: 15px;
-            width: 100%;
-            text-align: center;
+            left: 20px;
             color: white;
-            font-size: 15px;
+            font-size: 14px;
             pointer-events: none;
             user-select: none;
             z-index: 10;
@@ -141,7 +140,7 @@
 
     <div id="info">
         <div class="info-box">
-            🎮 <b>Klick:</b> Abbauen | <kbd>Shift</kbd> + <b>Klick:</b> Bauen | <b>Rechte Maustaste:</b> Drehen | <b>1-6:</b> Block wählen
+            🎮 <b>Klick:</b> Abbauen | <kbd>Shift</kbd> + <b>Klick:</b> Bauen | <b>Rechte Maustaste:</b> Drehen | <b>1-6:</b> Block
         </div>
     </div>
 
@@ -152,7 +151,6 @@
         <button class="btn" onclick="document.getElementById('file-input').click()">📂 Laden</button>
         <button class="btn" onclick="clearWorld()">🗑️ Leeren</button>
         <input type="file" id="file-input" style="display: none;" accept=".json" onchange="importWorld(event)">
-        <!-- JETZT ERWENDBAR FÜR .schematic UND .schem -->
         <input type="file" id="schematic-input" style="display: none;" accept=".schematic,.schem" onchange="loadSchematicFile(event)">
     </div>
 
@@ -173,7 +171,7 @@
         <div class="slot" data-index="5" onclick="selectBlock(5)"><span class="slot-num">6</span></div>
     </div>
 
-    <!-- Libraries: Three.js, Controls & NBT/Gzip Parser -->
+    <!-- External Libraries -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
@@ -303,13 +301,15 @@
 
         function removeBlock(blockMesh) {
             scene.remove(blockMesh);
-            objects.splice(objects.indexOf(blockMesh), 1);
+            const objIndex = objects.indexOf(blockMesh);
+            if (objIndex !== -1) objects.splice(objIndex, 1);
+            
             const index = blocksData.findIndex(b => b.x === blockMesh.userData.x && b.y === blockMesh.userData.y && b.z === blockMesh.userData.z);
             if (index !== -1) blocksData.splice(index, 1);
             saveToLocalStorage();
         }
 
-        // --- ERWEITERTER SCHEMATIC & SCHEM PARSER ---
+        // --- SCHEMATIC / SCHEM PARSER LOGIK ---
         function loadSchematicFile(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -334,7 +334,6 @@
                         clearWorld(false);
                         const val = data.value;
 
-                        // Unterstützung für das neuere .schem Format (Sponge / WorldEdit 1.13+)
                         if (val.Schematic || val.Width) {
                             const root = val.Schematic ? val.Schematic.value : val;
                             const width = root.Width.value;
@@ -346,7 +345,6 @@
                             slider.value = height;
                             document.getElementById('layer-val').innerText = height;
 
-                            // Altes Format (.schematic)
                             if (root.Blocks) {
                                 const blocks = root.Blocks.value;
                                 let blockIdx = 0;
@@ -363,12 +361,10 @@
                                     }
                                 }
                             } 
-                            // Neues Format (.schem)
                             else if (root.BlockData) {
                                 const blockData = root.BlockData.value;
                                 const palette = root.Palette ? root.Palette.value : {};
                                 
-                                // Palette umkehren (Name -> ID)
                                 const paletteMap = {};
                                 Object.keys(palette).forEach(name => {
                                     paletteMap[palette[name].value] = name;
@@ -400,24 +396,22 @@
             reader.readAsArrayBuffer(file);
         }
 
-        // Hilfsfunktion: Altes Minecraft ID Zuordnung
         function getBlockTypeFromID(id) {
-            if (id === 2 || id === 3) return 0; // Gras/Erde
-            if (id === 5 || id === 17) return 2; // Holz
-            if (id === 57) return 3; // Diamant
-            if (id === 45) return 4; // Ziegel
-            if (id === 4) return 5; // Bruchstein
-            return 1; // Standard Stein
+            if (id === 2 || id === 3) return 0;
+            if (id === 5 || id === 17) return 2;
+            if (id === 57) return 3;
+            if (id === 45) return 4;
+            if (id === 4) return 5;
+            return 1;
         }
 
-        // Hilfsfunktion: Neues Minecraft Name Zuordnung (.schem Palette)
         function getBlockTypeFromName(name) {
             if (name.includes('grass') || name.includes('dirt')) return 0;
             if (name.includes('planks') || name.includes('log') || name.includes('wood')) return 2;
             if (name.includes('diamond')) return 3;
             if (name.includes('brick')) return 4;
             if (name.includes('cobblestone')) return 5;
-            return 1; // Standard Stein
+            return 1;
         }
 
         function updateLayerVisibility(maxY) {
@@ -516,7 +510,7 @@
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
             raycaster.setFromCamera(mouse, camera);
-            const intersects.length > 0 ? intersects : [];
+            const intersects = raycaster.intersectObjects(objects, false);
 
             if (intersects.length > 0) {
                 const intersect = intersects[0];
