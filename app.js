@@ -45,6 +45,9 @@ const texLogSide   = loadMinecraftTexture(BASE_URL + 'oak_log.png');
 const texDiamond   = loadMinecraftTexture(BASE_URL + 'diamond_block.png');
 const texBricks    = loadMinecraftTexture(BASE_URL + 'bricks.png');
 const texCobble    = loadMinecraftTexture(BASE_URL + 'cobblestone.png');
+const texLeaves    = loadMinecraftTexture(BASE_URL + 'oak_leaves.png');
+const texGlass     = loadMinecraftTexture(BASE_URL + 'glass.png');
+const texPumpkin   = loadMinecraftTexture(BASE_URL + 'pumpkin_side.png');
 
 const blockTypes = [
     {
@@ -64,7 +67,10 @@ const blockTypes = [
     { name: 'Diamant', icon: BASE_URL + 'diamond_block.png', materials: new THREE.MeshStandardMaterial({ map: texDiamond }) },
     { name: 'Ziegel', icon: BASE_URL + 'bricks.png', materials: new THREE.MeshStandardMaterial({ map: texBricks }) },
     { name: 'Bruchstein', icon: BASE_URL + 'cobblestone.png', materials: new THREE.MeshStandardMaterial({ map: texCobble }) },
-    { name: 'Baumstamm', icon: BASE_URL + 'oak_log.png', materials: new THREE.MeshStandardMaterial({ map: texLogSide }) }
+    { name: 'Baumstamm', icon: BASE_URL + 'oak_log.png', materials: new THREE.MeshStandardMaterial({ map: texLogSide }) },
+    { name: 'Laub', icon: BASE_URL + 'oak_leaves.png', materials: new THREE.MeshStandardMaterial({ map: texLeaves, color: 0x48b536, transparent: true }) },
+    { name: 'Glas', icon: BASE_URL + 'glass.png', materials: new THREE.MeshStandardMaterial({ map: texGlass, transparent: true, opacity: 0.7 }) },
+    { name: 'Kürbis', icon: BASE_URL + 'pumpkin_side.png', materials: new THREE.MeshStandardMaterial({ map: texPumpkin }) }
 ];
 
 let activeBlockIndex = 0;
@@ -257,8 +263,6 @@ function parseNBTData(uint8Data) {
             let root = unwrap(data);
             if (root.Schematic) root = unwrap(root.Schematic);
 
-            console.log("Schematic-Keys:", Object.keys(root));
-
             const width  = unwrap(root.Width);
             const height = unwrap(root.Height);
             const length = unwrap(root.Length);
@@ -340,20 +344,26 @@ function parseNBTData(uint8Data) {
 }
 
 function getBlockTypeFromID(id) {
-    if (id === 2 || id === 3) return 0;
-    if (id === 5) return 2;
-    if (id === 17) return 6;
-    if (id === 57) return 3;
-    if (id === 45) return 4;
-    if (id === 4) return 5;
+    if (id === 2 || id === 3) return 0; // Gras/Erde
+    if (id === 5) return 2; // Planks
+    if (id === 17) return 6; // Log
+    if (id === 18) return 7; // Leaves
+    if (id === 20) return 8; // Glass
+    if (id === 86) return 9; // Pumpkin
+    if (id === 57) return 3; // Diamond
+    if (id === 45) return 4; // Bricks
+    if (id === 4) return 5; // Cobblestone
     return 1;
 }
 
 function getBlockTypeFromName(name) {
     const n = name.toLowerCase();
     if (n.includes('grass') || n.includes('dirt')) return 0;
-    if (n.includes('log') || n.includes('wood') || n.includes('stem')) return 6;
-    if (n.includes('plank') || n.includes('fence') || n.includes('door') || n.includes('slab') || n.includes('stairs')) return 2;
+    if (n.includes('leaves') || n.includes('bush') || n.includes('plant') || n.includes('flower') || n.includes('vine')) return 7; // Laub/Pflanzen
+    if (n.includes('glass')) return 8; // Glas
+    if (n.includes('pumpkin') || n.includes('melon')) return 9; // Kürbis
+    if (n.includes('log') || n.includes('wood') || n.includes('stem')) return 6; // Holzstamm
+    if (n.includes('plank') || n.includes('fence') || n.includes('door') || n.includes('slab') || n.includes('stairs')) return 2; // Holzbretter
     if (n.includes('diamond')) return 3;
     if (n.includes('brick')) return 4;
     if (n.includes('cobble') || n.includes('stone') || n.includes('deepslate') || n.includes('granite') || n.includes('andesite')) return 5;
