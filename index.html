@@ -184,10 +184,10 @@
         <div class="slot" data-index="5" onclick="selectBlock(5)"><span class="slot-num">6</span></div>
     </div>
 
+    <!-- Zuverlässige Bibliotheken (Three.js, OrbitControls, Pako & Fflate) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/sjrd/nbt.js@master/nbt.js"></script>
     <script src="https://unpkg.com/fflate/umd/index.js"></script>
 
     <script>
@@ -323,6 +323,71 @@
             saveToLocalStorage();
         }
 
+        // --- EIGENER NBT-PARSER (KEINE EXTERNE BIBLIOTHEK NÖTIG) ---
+        const NBT_TYPES = ['end','byte','short','int','long','float','double','byteArray','string','list','compound','intArray','longArray'];
+        function parseNbt(u8) {
+            const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+            const dec = new TextDecoder('utf-8');
+            let p = 0;
+            const readStr = () => {
+                const len = dv.getUint16(p); p += 2;
+                const s = dec.decode(u8.subarray(p, p + len)); p += len;
+                return s;
+            };
+            function payload(t) {
+                switch (t) {
+                    case 1: return dv.getInt8(p++);
+                    case 2: { const v = dv.getInt16(p); p += 2; return v; }
+                    case 3: { const v = dv.getInt32(p); p += 4; return v; }
+                    case 4: { const v = dv.getBigInt64(p); p += 8; return v; }
+                    case 5: { const v = dv.getFloat32(p); p += 4; return v; }
+                    case 6: { const v = dv.getFloat64(p); p += 8; return v; }
+                    case 7: { const len = dv.getInt32(p); p += 4; const a = u8.subarray(p, p + len); p += len; return a; }
+                    case 8: return readStr();
+                    case 9: {
+                        const it = dv.getUint8(p++);
+                        const len = dv.getInt32(p); p += 4;
+                        const arr = [];
+                        for (let i = 0; i < len; i++) arr.push({ type: NBT_TYPES[it], value: payload(it) });
+                        return arr;
+                    }
+                    case 10: {
+                        const obj = {};
+                        while (true) {
+                            const t2 = dv.getUint8(p++);
+                            if (t2 === 0) break;
+                            const name = readStr();
+                            obj[name] = { type: NBT_TYPES[t2], value: payload(t2) };
+                        }
+                        return obj;
+                    }
+                    case 11: {
+                        const len = dv.getInt32(p); p += 4;
+                        const a = new Array(len);
+                        for (let i = 0; i < len; i++) { a[i] = dv.getInt32(p); p += 4; }
+                        return a;
+                    }
+                    case 12: {
+                        const len = dv.getInt32(p); p += 4;
+                        p += len * 8;
+                        return [];
+                    }
+                    default: throw new Error("Unbekannter NBT-Typ: " + t);
+                }
+            }
+            const rootType = dv.getUint8(p++);
+            if (rootType !== 10) throw new Error("Keine gültige NBT-Datei (Root ist kein Compound)");
+            readStr();
+            return { type: 'compound', value: payload(10) };
+        }
+        const NBT = {
+            parse(u8, cb) {
+                let result = null, err = null;
+                try { result = parseNbt(u8); } catch (e) { err = e; }
+                cb(err, result);
+            }
+        };
+
         function loadSchematicFile(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -358,19 +423,19 @@
                     } catch (err) {
                         overlay.style.display = 'none';
                         event.target.value = '';
-                        alert("Fehler beim Verarbeiten der Datei.");
+                        console.error(err);
+                        alert("Fehler beim Verarbeiten der Datei: " + err.message);
                     }
                 };
                 reader.readAsArrayBuffer(file);
             }, 100);
         }
 
-        // --- EXAKTES PARSING (INCL. CLAUDE SPONGE V1/V2/V3 UND ERROR-DIAGNOSE) ---
         function parseNBTData(uint8Data) {
             let uncompressed;
             try { uncompressed = pako.ungzip(uint8Data); } catch (err) { uncompressed = uint8Data; }
 
-            nbt.parse(uncompressed, function(error, data) {
+            NBT.parse(uncompressed, function(error, data) {
                 document.getElementById('loading-overlay').style.display = 'none';
 
                 if (error || !data) {
@@ -390,9 +455,7 @@
                     const height = unwrap(root.Height);
                     const length = unwrap(root.Length);
 
-                    if (!width || !height || !length) {
-                        throw new Error("Width/Height/Length fehlen. Keys: " + Object.keys(root).join(", "));
-                    }
+                    if (!width || !height || !length) throw new Error("Width/Height/Length fehlen. Keys: " + Object.keys(root).join(", "));
 
                     let palette = null, blockData = null, oldBlocks = null;
 
