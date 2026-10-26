@@ -499,3 +499,7 @@ window.addEventListener('resize', () => {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
 });
+window.addEventListener('keydown', (e) => {
+    if (e.key >= '1' && e.key <= '9') selectBlock(parseInt(e.key) - 1);
+    if (e.key === '0') selectBlock(9);
+});
