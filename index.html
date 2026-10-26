@@ -3,39 +3,113 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Minecraft 3D Interactive Builder</title>
+    <title>Minecraft 3D Builder mit Hotbar</title>
     <style>
         body {
             margin: 0;
             padding: 0;
             overflow: hidden;
             background-color: #1a1a1a;
-            font-family: sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
         #info {
             position: absolute;
-            top: 20px;
+            top: 15px;
             width: 100%;
             text-align: center;
             color: white;
-            font-size: 16px;
+            font-size: 15px;
             pointer-events: none;
-            background: rgba(0,0,0,0.6);
-            padding: 12px 0;
             user-select: none;
+            z-index: 10;
+        }
+        .info-box {
+            display: inline-block;
+            background: rgba(0, 0, 0, 0.65);
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
         kbd {
-            background: #444;
+            background: #333;
             padding: 2px 6px;
             border-radius: 4px;
-            border: 1px solid #666;
+            border: 1px solid #555;
+        }
+
+        /* Hotbar UI Style */
+        #hotbar-container {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 6px;
+            border-radius: 10px;
+            border: 2px solid #555;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.5);
+            z-index: 10;
+        }
+        .slot {
+            width: 50px;
+            height: 50px;
+            margin: 0 4px;
+            border: 3px solid #444;
+            border-radius: 6px;
+            background-size: cover;
+            background-position: center;
+            cursor: pointer;
+            position: relative;
+            box-sizing: border-box;
+            transition: transform 0.1s ease;
+        }
+        .slot:hover {
+            transform: scale(1.08);
+        }
+        .slot.active {
+            border-color: #ffcc00;
+            box-shadow: 0 0 10px #ffcc00;
+        }
+        .slot-num {
+            position: absolute;
+            top: 2px;
+            left: 4px;
+            color: white;
+            font-size: 11px;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px black;
         }
     </style>
 </head>
 <body>
 
     <div id="info">
-        🎮 <b>Klick:</b> Block abbauen | <kbd>Shift</kbd> + <b>Klick:</b> Block setzen | <b>Rechte Maustaste / Ziehen:</b> Kamera drehen
+        <div class="info-box">
+            🎮 <b>Klick:</b> Abbauen | <kbd>Shift</kbd> + <b>Klick:</b> Bauen | <b>Rechte Maustaste:</b> Drehen | <b>1-6:</b> Block wählen
+        </div>
+    </div>
+
+    <!-- Hotbar UI -->
+    <div id="hotbar-container">
+        <div class="slot active" data-index="0" onclick="selectBlock(0)">
+            <span class="slot-num">1</span>
+        </div>
+        <div class="slot" data-index="1" onclick="selectBlock(1)">
+            <span class="slot-num">2</span>
+        </div>
+        <div class="slot" data-index="2" onclick="selectBlock(2)">
+            <span class="slot-num">3</span>
+        </div>
+        <div class="slot" data-index="3" onclick="selectBlock(3)">
+            <span class="slot-num">4</span>
+        </div>
+        <div class="slot" data-index="4" onclick="selectBlock(4)">
+            <span class="slot-num">5</span>
+        </div>
+        <div class="slot" data-index="5" onclick="selectBlock(5)">
+            <span class="slot-num">6</span>
+        </div>
     </div>
 
     <!-- 1. Three.js Hauptbibliothek -->
@@ -65,7 +139,6 @@
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
-        // Kamera-Drehung auf die rechte Maustaste legen, damit die linke frei zum Bauen ist!
         controls.mouseButtons = {
             LEFT: THREE.MOUSE.NONE,
             MIDDLE: THREE.MOUSE.DOLLY,
@@ -90,23 +163,86 @@
             return texture;
         }
 
-        const textureSide = loadMinecraftTexture('https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.19/assets/minecraft/textures/block/grass_block_side.png');
-        const textureTop = loadMinecraftTexture('https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.19/assets/minecraft/textures/block/grass_block_top.png');
-        const textureBottom = loadMinecraftTexture('https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.19/assets/minecraft/textures/block/dirt.png');
+        const BASE_URL = 'https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.19/assets/minecraft/textures/block/';
 
-        const blockMaterials = [
-            new THREE.MeshStandardMaterial({ map: textureSide }),
-            new THREE.MeshStandardMaterial({ map: textureSide }),
-            new THREE.MeshStandardMaterial({ map: textureTop, color: 0x7cbd6b }),
-            new THREE.MeshStandardMaterial({ map: textureBottom }),
-            new THREE.MeshStandardMaterial({ map: textureSide }),
-            new THREE.MeshStandardMaterial({ map: textureSide })
+        const texGrassSide = loadMinecraftTexture(BASE_URL + 'grass_block_side.png');
+        const texGrassTop  = loadMinecraftTexture(BASE_URL + 'grass_block_top.png');
+        const texDirt      = loadMinecraftTexture(BASE_URL + 'dirt.png');
+        const texStone     = loadMinecraftTexture(BASE_URL + 'stone.png');
+        const texPlanks    = loadMinecraftTexture(BASE_URL + 'oak_planks.png');
+        const texDiamond   = loadMinecraftTexture(BASE_URL + 'diamond_block.png');
+        const texBricks    = loadMinecraftTexture(BASE_URL + 'bricks.png');
+        const texCobble    = loadMinecraftTexture(BASE_URL + 'cobblestone.png');
+
+        // Block-Definitionen (Materialien)
+        const blockTypes = [
+            {
+                name: 'Gras',
+                icon: BASE_URL + 'grass_block_side.png',
+                materials: [
+                    new THREE.MeshStandardMaterial({ map: texGrassSide }),
+                    new THREE.MeshStandardMaterial({ map: texGrassSide }),
+                    new THREE.MeshStandardMaterial({ map: texGrassTop, color: 0x7cbd6b }),
+                    new THREE.MeshStandardMaterial({ map: texDirt }),
+                    new THREE.MeshStandardMaterial({ map: texGrassSide }),
+                    new THREE.MeshStandardMaterial({ map: texGrassSide })
+                ]
+            },
+            {
+                name: 'Stein',
+                icon: BASE_URL + 'stone.png',
+                materials: new THREE.MeshStandardMaterial({ map: texStone })
+            },
+            {
+                name: 'Holz',
+                icon: BASE_URL + 'oak_planks.png',
+                materials: new THREE.MeshStandardMaterial({ map: texPlanks })
+            },
+            {
+                name: 'Diamant',
+                icon: BASE_URL + 'diamond_block.png',
+                materials: new THREE.MeshStandardMaterial({ map: texDiamond })
+            },
+            {
+                name: 'Ziegel',
+                icon: BASE_URL + 'bricks.png',
+                materials: new THREE.MeshStandardMaterial({ map: texBricks })
+            },
+            {
+                name: 'Bruchstein',
+                icon: BASE_URL + 'cobblestone.png',
+                materials: new THREE.MeshStandardMaterial({ map: texCobble })
+            }
         ];
 
-        const blockGeometry = new THREE.BoxGeometry(1, 1, 1);
-        const objects = []; // Enthält alle Objekte, mit denen man interagieren kann
+        let activeBlockIndex = 0;
 
-        // Bodenplatte (Unsichtbar für Klicks, aber fängt Blöcke auf Y=0 ab)
+        // UI-Hotbar Vorschauen setzen
+        const slots = document.querySelectorAll('.slot');
+        slots.forEach((slot, idx) => {
+            slot.style.backgroundImage = `url('${blockTypes[idx].icon}')`;
+        });
+
+        function selectBlock(index) {
+            activeBlockIndex = index;
+            slots.forEach((s, idx) => {
+                if (idx === index) s.classList.add('active');
+                else s.classList.remove('active');
+            });
+        }
+
+        // Tastatur 1-6 abfangen
+        window.addEventListener('keydown', (e) => {
+            if (e.key >= '1' && e.key <= '6') {
+                selectBlock(parseInt(e.key) - 1);
+            }
+        });
+
+        // 3D-Geometrie & Objekte
+        const blockGeometry = new THREE.BoxGeometry(1, 1, 1);
+        const objects = [];
+
+        // Bodenplatte
         const planeGeometry = new THREE.PlaneGeometry(20, 20);
         planeGeometry.rotateX(-Math.PI / 2);
         const planeMaterial = new THREE.MeshStandardMaterial({ color: 0x22222b });
@@ -121,17 +257,18 @@
         gridHelper.position.y = -0.49;
         scene.add(gridHelper);
 
-        // Hilfs-Drahtgitter für die Block-Vorschau
+        // Vorschau-Rahmen
         const rollOverGeo = new THREE.BoxGeometry(1.01, 1.01, 1.01);
-        const rollOverMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
+        const rollOverMaterial = new THREE.MeshBasicMaterial({ color: 0xffcc00, wireframe: true });
         const rollOverMesh = new THREE.Mesh(rollOverGeo, rollOverMaterial);
         scene.add(rollOverMesh);
 
-        // Einen Start-Block in der Mitte platzieren
-        createBlock(0, 0, 0);
+        // Start-Block erstellen
+        createBlock(0, 0, 0, 0);
 
-        function createBlock(x, y, z) {
-            const block = new THREE.Mesh(blockGeometry, blockMaterials);
+        function createBlock(x, y, z, typeIndex) {
+            const mat = blockTypes[typeIndex].materials;
+            const block = new THREE.Mesh(blockGeometry, mat);
             block.position.set(x, y, z);
             block.castShadow = true;
             block.receiveShadow = true;
@@ -139,16 +276,15 @@
             objects.push(block);
         }
 
-        // Raycaster für Maus-Erkennung im 3D-Raum
+        // Raycaster
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
-
         let isShiftDown = false;
 
         document.addEventListener('keydown', (e) => { if (e.key === 'Shift') isShiftDown = true; });
         document.addEventListener('keyup', (e) => { if (e.key === 'Shift') isShiftDown = false; });
 
-        // Mausbewegung für Vorschau-Rahmen
+        // Maus-Vorschau
         window.addEventListener('pointermove', (event) => {
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -159,12 +295,10 @@
             if (intersects.length > 0) {
                 const intersect = intersects[0];
                 if (isShiftDown) {
-                    // Block an der getroffenen Fläche anbauen
                     const targetPos = intersect.point.clone().add(intersect.face.normal.clone().multiplyScalar(0.5));
                     rollOverMesh.position.copy(targetPos).floor().addScalar(0.5);
                     rollOverMesh.visible = true;
                 } else {
-                    // Auf den bestehenden Block zeigen
                     if (intersect.object !== plane) {
                         rollOverMesh.position.copy(intersect.object.position);
                         rollOverMesh.visible = true;
@@ -177,10 +311,11 @@
             }
         });
 
-        // Klick-Event zum Bauen / Abbauen
+        // Klick-Event
         window.addEventListener('pointerdown', (event) => {
-            // Nur auf linke Maustaste reagieren
             if (event.button !== 0) return;
+            // Verhindern, dass Klicks auf die UI-Elemente Blöcke im 3D-Raum setzen
+            if (event.target.closest('#hotbar-container')) return;
 
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -192,9 +327,9 @@
                 const intersect = intersects[0];
 
                 if (isShiftDown) {
-                    // BLOCK SETZEN
+                    // BLOCK SETZEN (mit ausgewählter Blockart)
                     const targetPos = intersect.point.clone().add(intersect.face.normal.clone().multiplyScalar(0.5)).floor().addScalar(0.5);
-                    createBlock(targetPos.x, targetPos.y, targetPos.z);
+                    createBlock(targetPos.x, targetPos.y, targetPos.z, activeBlockIndex);
                 } else {
                     // BLOCK ABBAUEN
                     if (intersect.object !== plane) {
