@@ -64,7 +64,6 @@
             border-color: #ffcc00;
         }
 
-        /* Lade-Benachrichtigung */
         #loading-overlay {
             position: absolute;
             top: 50%;
@@ -167,7 +166,8 @@
         <button class="btn" onclick="document.getElementById('file-input').click()">📂 Laden</button>
         <button class="btn" onclick="clearWorld()">🗑️ Leeren</button>
         <input type="file" id="file-input" style="display: none;" accept=".json" onchange="importWorld(event)">
-        <input type="file" id="schematic-input" style="display: none;" accept=".schematic,.schem,.zip,.nbt,.litematic" onchange="loadSchematicFile(event)">
+        <!-- JETZT FREI FÜR ALLE DATEIEN, DAMIT SYSTEME WIE ANDROID/IOS NICHTS AUSGRAUEN -->
+        <input type="file" id="schematic-input" style="display: none;" accept="*/*" onchange="loadSchematicFile(event)">
     </div>
 
     <div id="layer-container">
@@ -350,14 +350,20 @@
                         fflate.unzip(buffer, (err, unzipped) => {
                             if (err) {
                                 document.getElementById('loading-overlay').style.display = 'none';
+                                event.target.value = '';
                                 return alert("ZIP Fehler");
                             }
                             let foundKey = Object.keys(unzipped).find(k => k.endsWith('.schem') || k.endsWith('.schematic'));
                             if (foundKey) parseNBTData(unzipped[foundKey]);
-                            else document.getElementById('loading-overlay').style.display = 'none';
+                            else {
+                                document.getElementById('loading-overlay').style.display = 'none';
+                                alert("Keine Bauplan-Datei im ZIP gefunden.");
+                            }
+                            event.target.value = '';
                         });
                     } else {
                         parseNBTData(buffer);
+                        event.target.value = '';
                     }
                 };
                 reader.readAsArrayBuffer(file);
@@ -394,8 +400,12 @@
                 slider.value = height;
                 document.getElementById('layer-val').innerText = height;
 
-                // ALTES FORMAT (.schematic)
-                if (root.Blocks) {
+                let paletteMap = {};
+                let blockDataArray = null;
+
+                // FORMATAUSWERTUNG (V1, V2 UND V3)
+                if (root.Blocks && root.Blocks.type === 'byteArray') {
+                    // ALTES FORMAT (.schematic)
                     const blocks = root.Blocks.value;
                     let blockIdx = 0;
                     for (let y = 0; y < height; y++) {
@@ -411,37 +421,47 @@
                         }
                     }
                 } 
-                // NEUES FORMAT (.schem)
-                else if (root.BlockData) {
-                    const blockDataArray = root.BlockData.value;
-                    const palette = root.Palette ? root.Palette.value : {};
-                    
-                    const paletteMap = {};
-                    Object.keys(palette).forEach(name => {
-                        paletteMap[palette[name].value] = name;
-                    });
-
-                    let decodedIds = [];
-                    let offset = 0;
-                    while (offset < blockDataArray.length && decodedIds.length < width * height * length) {
-                        let res = readVarInt(blockDataArray, offset);
-                        decodedIds.push(res.value);
-                        offset += res.size;
+                else {
+                    // NEUES FORMAT SPONGE SCHEMATIC V3 (Ab MC 1.20+)
+                    if (root.Blocks && root.Blocks.type === 'compound') {
+                        const paletteObj = root.Blocks.value.Palette.value;
+                        Object.keys(paletteObj).forEach(name => {
+                            paletteMap[paletteObj[name].value] = name;
+                        });
+                        blockDataArray = root.Blocks.value.Data.value;
+                    } 
+                    // NEUES FORMAT SPONGE SCHEMATIC V2 (Älteres .schem)
+                    else if (root.BlockData) {
+                        const paletteObj = root.Palette ? root.Palette.value : {};
+                        Object.keys(paletteObj).forEach(name => {
+                            paletteMap[paletteObj[name].value] = name;
+                        });
+                        blockDataArray = root.BlockData.value;
                     }
 
-                    let i = 0;
-                    for (let y = 0; y < height; y++) {
-                        for (let z = 0; z < length; z++) {
-                            for (let x = 0; x < width; x++) {
-                                if (i < decodedIds.length) {
-                                    const stateId = decodedIds[i];
-                                    const blockName = paletteMap[stateId] || '';
-                                    if (blockName && !blockName.includes('air')) {
-                                        let typeIndex = getBlockTypeFromName(blockName);
-                                        createBlock(x - Math.floor(width/2), y, z - Math.floor(length/2), typeIndex, false);
+                    if (blockDataArray) {
+                        let decodedIds = [];
+                        let offset = 0;
+                        while (offset < blockDataArray.length && decodedIds.length < width * height * length) {
+                            let res = readVarInt(blockDataArray, offset);
+                            decodedIds.push(res.value);
+                            offset += res.size;
+                        }
+
+                        let i = 0;
+                        for (let y = 0; y < height; y++) {
+                            for (let z = 0; z < length; z++) {
+                                for (let x = 0; x < width; x++) {
+                                    if (i < decodedIds.length) {
+                                        const stateId = decodedIds[i];
+                                        const blockName = paletteMap[stateId] || '';
+                                        if (blockName && !blockName.includes('air')) {
+                                            let typeIndex = getBlockTypeFromName(blockName);
+                                            createBlock(x - Math.floor(width/2), y, z - Math.floor(length/2), typeIndex, false);
+                                        }
                                     }
+                                    i++;
                                 }
-                                i++;
                             }
                         }
                     }
@@ -449,7 +469,7 @@
 
                 saveToLocalStorage();
 
-                // Kamera automatisch auf das Bauwerk ausrichten!
+                // Kamera automatisch ausrichten
                 const maxDim = Math.max(width, height, length);
                 camera.position.set(maxDim * 1.2, maxDim * 1.2, maxDim * 1.5);
                 controls.target.set(0, height / 2, 0);
@@ -460,7 +480,7 @@
         function getBlockTypeFromID(id) {
             if (id === 2 || id === 3) return 0;
             if (id === 5) return 2;
-            if (id === 17) return 6; // Log
+            if (id === 17) return 6;
             if (id === 57) return 3;
             if (id === 45) return 4;
             if (id === 4) return 5;
@@ -470,8 +490,8 @@
         function getBlockTypeFromName(name) {
             const n = name.toLowerCase();
             if (n.includes('grass') || n.includes('dirt')) return 0;
-            if (n.includes('log') || n.includes('wood') || n.includes('stem')) return 6; // Holzstamm
-            if (n.includes('plank') || n.includes('fence') || n.includes('door') || n.includes('slab') || n.includes('stairs')) return 2; // Bretter
+            if (n.includes('log') || n.includes('wood') || n.includes('stem')) return 6;
+            if (n.includes('plank') || n.includes('fence') || n.includes('door') || n.includes('slab') || n.includes('stairs')) return 2;
             if (n.includes('diamond')) return 3;
             if (n.includes('brick')) return 4;
             if (n.includes('cobble') || n.includes('stone') || n.includes('deepslate') || n.includes('granite') || n.includes('andesite')) return 5;
@@ -518,6 +538,7 @@
                 clearWorld(false);
                 importedData.forEach(b => createBlock(b.x, b.y, b.z, b.type, false));
                 saveToLocalStorage();
+                event.target.value = '';
             };
             reader.readAsText(file);
         }
