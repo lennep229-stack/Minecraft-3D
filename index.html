@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Minecraft 3D Builder mit Hotbar</title>
+    <title>Minecraft 3D Builder mit Speichern & Laden</title>
     <style>
         body {
             margin: 0;
@@ -35,6 +35,35 @@
             padding: 2px 6px;
             border-radius: 4px;
             border: 1px solid #555;
+        }
+
+        /* Top Menu Bar for Save/Load */
+        #menu-container {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            display: flex;
+            gap: 8px;
+            z-index: 20;
+        }
+        .btn {
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            border: 1px solid #555;
+            padding: 8px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: bold;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .btn:hover {
+            background: #ffcc00;
+            color: black;
+            border-color: #ffcc00;
         }
 
         /* Hotbar UI Style */
@@ -90,31 +119,26 @@
         </div>
     </div>
 
-    <!-- Hotbar UI -->
-    <div id="hotbar-container">
-        <div class="slot active" data-index="0" onclick="selectBlock(0)">
-            <span class="slot-num">1</span>
-        </div>
-        <div class="slot" data-index="1" onclick="selectBlock(1)">
-            <span class="slot-num">2</span>
-        </div>
-        <div class="slot" data-index="2" onclick="selectBlock(2)">
-            <span class="slot-num">3</span>
-        </div>
-        <div class="slot" data-index="3" onclick="selectBlock(3)">
-            <span class="slot-num">4</span>
-        </div>
-        <div class="slot" data-index="4" onclick="selectBlock(4)">
-            <span class="slot-num">5</span>
-        </div>
-        <div class="slot" data-index="5" onclick="selectBlock(5)">
-            <span class="slot-num">6</span>
-        </div>
+    <!-- Save/Load Action Buttons -->
+    <div id="menu-container">
+        <button class="btn" onclick="exportWorld()">💾 Speichern</button>
+        <button class="btn" onclick="document.getElementById('file-input').click()">📂 Laden</button>
+        <button class="btn" onclick="clearWorld()">🗑️ Leeren</button>
+        <input type="file" id="file-input" style="display: none;" accept=".json" onchange="importWorld(event)">
     </div>
 
-    <!-- 1. Three.js Hauptbibliothek -->
+    <!-- Hotbar UI -->
+    <div id="hotbar-container">
+        <div class="slot active" data-index="0" onclick="selectBlock(0)"><span class="slot-num">1</span></div>
+        <div class="slot" data-index="1" onclick="selectBlock(1)"><span class="slot-num">2</span></div>
+        <div class="slot" data-index="2" onclick="selectBlock(2)"><span class="slot-num">3</span></div>
+        <div class="slot" data-index="3" onclick="selectBlock(3)"><span class="slot-num">4</span></div>
+        <div class="slot" data-index="4" onclick="selectBlock(4)"><span class="slot-num">5</span></div>
+        <div class="slot" data-index="5" onclick="selectBlock(5)"><span class="slot-num">6</span></div>
+    </div>
+
+    <!-- Three.js Library & Controls -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <!-- 2. OrbitControls Erweiterung -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
     <script>
@@ -128,7 +152,7 @@
             0.1, 
             1000
         );
-        camera.position.set(4, 5, 6);
+        camera.position.set(5, 6, 7);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -174,7 +198,7 @@
         const texBricks    = loadMinecraftTexture(BASE_URL + 'bricks.png');
         const texCobble    = loadMinecraftTexture(BASE_URL + 'cobblestone.png');
 
-        // Block-Definitionen (Materialien)
+        // Block-Definitionen
         const blockTypes = [
             {
                 name: 'Gras',
@@ -217,7 +241,7 @@
 
         let activeBlockIndex = 0;
 
-        // UI-Hotbar Vorschauen setzen
+        // UI Hotbar Icons setzen
         const slots = document.querySelectorAll('.slot');
         slots.forEach((slot, idx) => {
             slot.style.backgroundImage = `url('${blockTypes[idx].icon}')`;
@@ -231,16 +255,16 @@
             });
         }
 
-        // Tastatur 1-6 abfangen
         window.addEventListener('keydown', (e) => {
             if (e.key >= '1' && e.key <= '6') {
                 selectBlock(parseInt(e.key) - 1);
             }
         });
 
-        // 3D-Geometrie & Objekte
+        // 3D Objekte & Array für gesetzte Blöcke
         const blockGeometry = new THREE.BoxGeometry(1, 1, 1);
         const objects = [];
+        const blocksData = []; // Datenstruktur für Speichern & Laden
 
         // Bodenplatte
         const planeGeometry = new THREE.PlaneGeometry(20, 20);
@@ -252,7 +276,6 @@
         scene.add(plane);
         objects.push(plane);
 
-        // Boden-Gitternetz
         const gridHelper = new THREE.GridHelper(20, 20, 0x555555, 0x333333);
         gridHelper.position.y = -0.49;
         scene.add(gridHelper);
@@ -263,20 +286,87 @@
         const rollOverMesh = new THREE.Mesh(rollOverGeo, rollOverMaterial);
         scene.add(rollOverMesh);
 
-        // Start-Block erstellen
-        createBlock(0, 0, 0, 0);
-
-        function createBlock(x, y, z, typeIndex) {
+        function createBlock(x, y, z, typeIndex, save = true) {
             const mat = blockTypes[typeIndex].materials;
             const block = new THREE.Mesh(blockGeometry, mat);
             block.position.set(x, y, z);
             block.castShadow = true;
             block.receiveShadow = true;
+            block.userData = { x, y, z, type: typeIndex };
             scene.add(block);
             objects.push(block);
+
+            if (save) {
+                blocksData.push({ x, y, z, type: typeIndex });
+                saveToLocalStorage();
+            }
         }
 
-        // Raycaster
+        function removeBlock(blockMesh) {
+            scene.remove(blockMesh);
+            objects.splice(objects.indexOf(blockMesh), 1);
+            
+            const index = blocksData.findIndex(b => b.x === blockMesh.userData.x && b.y === blockMesh.userData.y && b.z === blockMesh.userData.z);
+            if (index !== -1) blocksData.splice(index, 1);
+
+            saveToLocalStorage();
+        }
+
+        // --- SPEICHERN & LADEN LOGIK ---
+        function saveToLocalStorage() {
+            localStorage.setItem('minecraft_world', JSON.stringify(blocksData));
+        }
+
+        function loadFromLocalStorage() {
+            const savedWorld = localStorage.getItem('minecraft_world');
+            if (savedWorld) {
+                const parsed = JSON.parse(savedWorld);
+                parsed.forEach(b => createBlock(b.x, b.y, b.z, b.type, true));
+            } else {
+                createBlock(0, 0, 0, 0, true); // Standard Startblock
+            }
+        }
+
+        function exportWorld() {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(blocksData, null, 2));
+            const downloadAnchor = document.createElement('a');
+            downloadAnchor.setAttribute("href", dataStr);
+            downloadAnchor.setAttribute("download", "mein-minecraft-bauwerk.json");
+            document.body.appendChild(downloadAnchor);
+            downloadAnchor.click();
+            downloadAnchor.remove();
+        }
+
+        function importWorld(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const importedData = JSON.parse(e.target.result);
+                clearWorld(false);
+                importedData.forEach(b => createBlock(b.x, b.y, b.z, b.type, true));
+            };
+            reader.readAsText(file);
+        }
+
+        function clearWorld(ask = true) {
+            if (ask && !confirm("Möchtest du wirklich alle Blöcke löschen?")) return;
+            
+            // Alle Blöcke außer der Bodenplatte entfernen
+            for (let i = objects.length - 1; i >= 0; i--) {
+                if (objects[i] !== plane) {
+                    scene.remove(objects[i]);
+                }
+            }
+            objects.length = 0;
+            objects.push(plane);
+            blocksData.length = 0;
+            saveToLocalStorage();
+            if (rollOverMesh) rollOverMesh.visible = false;
+        }
+
+        // Raycaster & Interaktionen
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
         let isShiftDown = false;
@@ -284,7 +374,6 @@
         document.addEventListener('keydown', (e) => { if (e.key === 'Shift') isShiftDown = true; });
         document.addEventListener('keyup', (e) => { if (e.key === 'Shift') isShiftDown = false; });
 
-        // Maus-Vorschau
         window.addEventListener('pointermove', (event) => {
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -311,11 +400,9 @@
             }
         });
 
-        // Klick-Event
         window.addEventListener('pointerdown', (event) => {
             if (event.button !== 0) return;
-            // Verhindern, dass Klicks auf die UI-Elemente Blöcke im 3D-Raum setzen
-            if (event.target.closest('#hotbar-container')) return;
+            if (event.target.closest('#hotbar-container') || event.target.closest('#menu-container')) return;
 
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -327,21 +414,20 @@
                 const intersect = intersects[0];
 
                 if (isShiftDown) {
-                    // BLOCK SETZEN (mit ausgewählter Blockart)
                     const targetPos = intersect.point.clone().add(intersect.face.normal.clone().multiplyScalar(0.5)).floor().addScalar(0.5);
-                    createBlock(targetPos.x, targetPos.y, targetPos.z, activeBlockIndex);
+                    createBlock(targetPos.x, targetPos.y, targetPos.z, activeBlockIndex, true);
                 } else {
-                    // BLOCK ABBAUEN
                     if (intersect.object !== plane) {
-                        scene.remove(intersect.object);
-                        objects.splice(objects.indexOf(intersect.object), 1);
+                        removeBlock(intersect.object);
                         rollOverMesh.visible = false;
                     }
                 }
             }
         });
 
-        // Animations-Schleife
+        // Beim ersten Start geladene Welt wiederherstellen
+        loadFromLocalStorage();
+
         function animate() {
             requestAnimationFrame(animate);
             controls.update();
@@ -349,7 +435,6 @@
         }
         animate();
 
-        // Responsive Anpassung
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
