@@ -64,6 +64,24 @@
             border-color: #ffcc00;
         }
 
+        /* Lade-Benachrichtigung */
+        #loading-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.85);
+            color: #ffcc00;
+            padding: 20px 40px;
+            border-radius: 12px;
+            border: 2px solid #ffcc00;
+            font-size: 20px;
+            font-weight: bold;
+            display: none;
+            z-index: 100;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+        }
+
         #layer-container {
             position: absolute;
             left: 20px;
@@ -141,6 +159,8 @@
         </div>
     </div>
 
+    <div id="loading-overlay">⏳ Bauplan wird verarbeitet... Bitte warten!</div>
+
     <div id="menu-container">
         <button class="btn" onclick="document.getElementById('schematic-input').click()">📦 Bauplan Laden (.schem / .schematic)</button>
         <button class="btn" onclick="exportWorld()">💾 Speichern</button>
@@ -196,7 +216,7 @@
         scene.add(ambientLight);
 
         const sunLight = new THREE.DirectionalLight(0xffffff, 0.9);
-        sunLight.position.set(30, 50, 40);
+        sunLight.position.set(40, 60, 50);
         sunLight.castShadow = true;
         scene.add(sunLight);
 
@@ -215,6 +235,7 @@
         const texDirt      = loadMinecraftTexture(BASE_URL + 'dirt.png');
         const texStone     = loadMinecraftTexture(BASE_URL + 'stone.png');
         const texPlanks    = loadMinecraftTexture(BASE_URL + 'oak_planks.png');
+        const texLogSide   = loadMinecraftTexture(BASE_URL + 'oak_log.png');
         const texDiamond   = loadMinecraftTexture(BASE_URL + 'diamond_block.png');
         const texBricks    = loadMinecraftTexture(BASE_URL + 'bricks.png');
         const texCobble    = loadMinecraftTexture(BASE_URL + 'cobblestone.png');
@@ -236,12 +257,13 @@
             { name: 'Holz', icon: BASE_URL + 'oak_planks.png', materials: new THREE.MeshStandardMaterial({ map: texPlanks }) },
             { name: 'Diamant', icon: BASE_URL + 'diamond_block.png', materials: new THREE.MeshStandardMaterial({ map: texDiamond }) },
             { name: 'Ziegel', icon: BASE_URL + 'bricks.png', materials: new THREE.MeshStandardMaterial({ map: texBricks }) },
-            { name: 'Bruchstein', icon: BASE_URL + 'cobblestone.png', materials: new THREE.MeshStandardMaterial({ map: texCobble }) }
+            { name: 'Bruchstein', icon: BASE_URL + 'cobblestone.png', materials: new THREE.MeshStandardMaterial({ map: texCobble }) },
+            { name: 'Baumstamm', icon: BASE_URL + 'oak_log.png', materials: new THREE.MeshStandardMaterial({ map: texLogSide }) }
         ];
 
         let activeBlockIndex = 0;
         const slots = document.querySelectorAll('.slot');
-        slots.forEach((slot, idx) => { slot.style.backgroundImage = `url('${blockTypes[idx].icon}')`; });
+        slots.forEach((slot, idx) => { if (blockTypes[idx]) slot.style.backgroundImage = `url('${blockTypes[idx].icon}')`; });
 
         function selectBlock(index) {
             activeBlockIndex = index;
@@ -259,7 +281,7 @@
         const objects = [];
         const blocksData = [];
 
-        const planeGeometry = new THREE.PlaneGeometry(80, 80);
+        const planeGeometry = new THREE.PlaneGeometry(100, 100);
         planeGeometry.rotateX(-Math.PI / 2);
         const planeMaterial = new THREE.MeshStandardMaterial({ color: 0x22222b });
         const plane = new THREE.Mesh(planeGeometry, planeMaterial);
@@ -268,7 +290,7 @@
         scene.add(plane);
         objects.push(plane);
 
-        const gridHelper = new THREE.GridHelper(80, 80, 0x555555, 0x333333);
+        const gridHelper = new THREE.GridHelper(100, 100, 0x555555, 0x333333);
         gridHelper.position.y = -0.49;
         scene.add(gridHelper);
 
@@ -289,7 +311,6 @@
 
             if (save) {
                 blocksData.push({ x, y, z, type: typeIndex });
-                saveToLocalStorage();
             }
         }
 
@@ -303,10 +324,10 @@
             saveToLocalStorage();
         }
 
-        // --- VARINT PARSER FOR SCHEM PALETTES ---
         function readVarInt(array, offset) {
             let value = 0, size = 0, byte;
             do {
+                if (offset >= array.length) break;
                 byte = array[offset++];
                 value |= (byte & 0x7F) << (size * 7);
                 size++;
@@ -314,26 +335,33 @@
             return { value, size };
         }
 
-        // --- SCHEMATIC / SCHEM PARSER ---
         function loadSchematicFile(event) {
             const file = event.target.files[0];
             if (!file) return;
 
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const buffer = new Uint8Array(e.target.result);
+            document.getElementById('loading-overlay').style.display = 'block';
 
-                if (file.name.endsWith('.zip') || (buffer[0] === 0x50 && buffer[1] === 0x4B)) {
-                    fflate.unzip(buffer, (err, unzipped) => {
-                        if (err) return alert("ZIP Fehler");
-                        let foundKey = Object.keys(unzipped).find(k => k.endsWith('.schem') || k.endsWith('.schematic'));
-                        if (foundKey) parseNBTData(unzipped[foundKey]);
-                    });
-                } else {
-                    parseNBTData(buffer);
-                }
-            };
-            reader.readAsArrayBuffer(file);
+            setTimeout(() => {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const buffer = new Uint8Array(e.target.result);
+
+                    if (file.name.endsWith('.zip') || (buffer[0] === 0x50 && buffer[1] === 0x4B)) {
+                        fflate.unzip(buffer, (err, unzipped) => {
+                            if (err) {
+                                document.getElementById('loading-overlay').style.display = 'none';
+                                return alert("ZIP Fehler");
+                            }
+                            let foundKey = Object.keys(unzipped).find(k => k.endsWith('.schem') || k.endsWith('.schematic'));
+                            if (foundKey) parseNBTData(unzipped[foundKey]);
+                            else document.getElementById('loading-overlay').style.display = 'none';
+                        });
+                    } else {
+                        parseNBTData(buffer);
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            }, 100);
         }
 
         function parseNBTData(uint8Data) {
@@ -341,8 +369,10 @@
             try { uncompressed = pako.ungzip(uint8Data); } catch (err) { uncompressed = uint8Data; }
 
             nbt.parse(uncompressed, function(error, data) {
+                document.getElementById('loading-overlay').style.display = 'none';
+
                 if (error || !data) {
-                    alert("Konnte die Datei nicht als Minecraft-Bauplan einlesen.");
+                    alert("Konnte Bauplan-Daten nicht verarbeiten.");
                     return;
                 }
 
@@ -374,14 +404,14 @@
                                 const blockId = blocks[blockIdx];
                                 if (blockId !== 0) {
                                     let typeIndex = getBlockTypeFromID(blockId);
-                                    createBlock(x - Math.floor(width/2), y, z - Math.floor(length/2), typeIndex, true);
+                                    createBlock(x - Math.floor(width/2), y, z - Math.floor(length/2), typeIndex, false);
                                 }
                                 blockIdx++;
                             }
                         }
                     }
                 } 
-                // NEUES FORMAT (.schem mit Sponge-Structure Palette)
+                // NEUES FORMAT (.schem)
                 else if (root.BlockData) {
                     const blockDataArray = root.BlockData.value;
                     const palette = root.Palette ? root.Palette.value : {};
@@ -391,7 +421,6 @@
                         paletteMap[palette[name].value] = name;
                     });
 
-                    // VarInt Array dekodieren
                     let decodedIds = [];
                     let offset = 0;
                     while (offset < blockDataArray.length && decodedIds.length < width * height * length) {
@@ -409,7 +438,7 @@
                                     const blockName = paletteMap[stateId] || '';
                                     if (blockName && !blockName.includes('air')) {
                                         let typeIndex = getBlockTypeFromName(blockName);
-                                        createBlock(x - Math.floor(width/2), y, z - Math.floor(length/2), typeIndex, true);
+                                        createBlock(x - Math.floor(width/2), y, z - Math.floor(length/2), typeIndex, false);
                                     }
                                 }
                                 i++;
@@ -417,12 +446,21 @@
                         }
                     }
                 }
+
+                saveToLocalStorage();
+
+                // Kamera automatisch auf das Bauwerk ausrichten!
+                const maxDim = Math.max(width, height, length);
+                camera.position.set(maxDim * 1.2, maxDim * 1.2, maxDim * 1.5);
+                controls.target.set(0, height / 2, 0);
+                controls.update();
             });
         }
 
         function getBlockTypeFromID(id) {
             if (id === 2 || id === 3) return 0;
-            if (id === 5 || id === 17) return 2;
+            if (id === 5) return 2;
+            if (id === 17) return 6; // Log
             if (id === 57) return 3;
             if (id === 45) return 4;
             if (id === 4) return 5;
@@ -432,7 +470,8 @@
         function getBlockTypeFromName(name) {
             const n = name.toLowerCase();
             if (n.includes('grass') || n.includes('dirt')) return 0;
-            if (n.includes('plank') || n.includes('log') || n.includes('wood') || n.includes('fence') || n.includes('door') || n.includes('slab') || n.includes('stairs')) return 2;
+            if (n.includes('log') || n.includes('wood') || n.includes('stem')) return 6; // Holzstamm
+            if (n.includes('plank') || n.includes('fence') || n.includes('door') || n.includes('slab') || n.includes('stairs')) return 2; // Bretter
             if (n.includes('diamond')) return 3;
             if (n.includes('brick')) return 4;
             if (n.includes('cobble') || n.includes('stone') || n.includes('deepslate') || n.includes('granite') || n.includes('andesite')) return 5;
@@ -454,9 +493,9 @@
             const savedWorld = localStorage.getItem('minecraft_world');
             if (savedWorld) {
                 const parsed = JSON.parse(savedWorld);
-                parsed.forEach(b => createBlock(b.x, b.y, b.z, b.type, true));
+                parsed.forEach(b => createBlock(b.x, b.y, b.z, b.type, false));
             } else {
-                createBlock(0, 0, 0, 0, true);
+                createBlock(0, 0, 0, 0, false);
             }
         }
 
@@ -477,7 +516,8 @@
             reader.onload = function(e) {
                 const importedData = JSON.parse(e.target.result);
                 clearWorld(false);
-                importedData.forEach(b => createBlock(b.x, b.y, b.z, b.type, true));
+                importedData.forEach(b => createBlock(b.x, b.y, b.z, b.type, false));
+                saveToLocalStorage();
             };
             reader.readAsText(file);
         }
@@ -542,6 +582,7 @@
                 if (isShiftDown) {
                     const targetPos = intersect.point.clone().add(intersect.face.normal.clone().multiplyScalar(0.5)).floor().addScalar(0.5);
                     createBlock(targetPos.x, targetPos.y, targetPos.z, activeBlockIndex, true);
+                    saveToLocalStorage();
                 } else {
                     if (intersect.object !== plane) {
                         removeBlock(intersect.object);
